@@ -1,5 +1,6 @@
 import random
 import numpy as np
+import time
 from typing import List, Tuple
 
 
@@ -19,8 +20,8 @@ class NeuralNetwork:
     def __init__(self, sizes: List[int]):
         self.L = len(sizes)
         self.sizes = sizes
-        self.weights = [np.random.randn(y, x) for x, y in zip(sizes[:-1], sizes[1:])]
-        self.biases = [np.random.randn(x, 1) for x in sizes[1:]]
+        self.weights = [(np.random.randn(y, x), np.zeros(shape=(y, x))) for x, y in zip(sizes[:-1], sizes[1:])]
+        self.biases = [(np.random.randn(x, 1), np.zeros(shape=(x, 1))) for x in sizes[1:]]
 
     def feedforward(self, x: np.array) -> np.array:
         """
@@ -37,12 +38,12 @@ class NeuralNetwork:
             The vector of activations at the output layer
         """
         for W_l, b_l in zip(self.weights, self.biases):
-            x = sigmoid(W_l @ x + b_l)
+            x = sigmoid(W_l[0] @ x + b_l[0])
 
         return x
 
     def SGD(self, training_data: List[Tuple[np.array, np.array]], epochs_num: int,
-            mini_batch_size: int, eta: float, test_data=None):
+            mini_batch_size: int, eta: float, beta: float = 0, test_data=None):
         """
         Train the neural network using mini-batch stochastic gradient descent
 
@@ -57,6 +58,8 @@ class NeuralNetwork:
             The size of one mini-batch
         eta:
             The learning rate
+        beta:
+            The momentum coefficient
         test_data:
             The test set. If provided then the network
             will be evaluated against the test data after each
@@ -65,10 +68,7 @@ class NeuralNetwork:
         """
 
         m = len(training_data)
-
-        if test_data:
-            test_data = list(test_data)
-            n_test = len(test_data)
+        t_start = time.time()
 
         for epoch in range(1, epochs_num + 1):
             random.shuffle(training_data)
@@ -76,14 +76,15 @@ class NeuralNetwork:
             for i in range(0, m, mini_batch_size):
                 current_mini_batch = training_data[i:i + mini_batch_size]
                 self.update_mini_batch(mini_batch=current_mini_batch,
-                                       eta=eta)
+                                       eta=eta,
+                                       beta=beta)
             if test_data:
-                print(f"Epoch {epoch} complete, with: "
-                      f"{int(self.evaluate(test_data) * 100/ n_test)}% accuracy on the test set")
+                print(f"Epoch {epoch} complete with time {time.time() - t_start}, with: "
+                      f"{int(self.evaluate(test_data) * 100/ len(test_data))}% accuracy on the test set")
             else:
                 print(f"Epoch {epoch} complete")
 
-    def update_mini_batch(self, mini_batch: List[Tuple[np.array, np.array]], eta: float):
+    def update_mini_batch(self, mini_batch: List[Tuple[np.array, np.array]], eta: float, beta: float = 0):
         """
         Update the network's weights and biases by applying
         gradient descent using backpropagation to a single mini batch
@@ -94,6 +95,9 @@ class NeuralNetwork:
             List of tuples (x, y) of examples and labels
         eta:
             The learning rate
+        beta:
+            The momentum coefficient
+
         """
 
         m = len(mini_batch)
@@ -103,8 +107,15 @@ class NeuralNetwork:
             nabla_W, nabla_b = self.backprop(x, y)
 
             for i, (dC_dW_i, dC_db_i) in enumerate(zip(nabla_W, nabla_b)):
-                self.weights[i] -= zeta * dC_dW_i
-                self.biases[i] -= zeta * dC_db_i
+
+                W_i, v_dW_i = self.weights[i]
+                b_i, v_db_i = self.biases[i]
+
+                v_dW_i = beta * v_dW_i + (1-beta) * dC_dW_i
+                v_db_i = beta * v_db_i + (1 - beta) * dC_db_i
+
+                W_i -= zeta * v_dW_i
+                b_i -= zeta * v_db_i
 
     def backprop(self, x: np.array, y: np.array) -> Tuple[List[np.array], List[np.array]]:
         """
@@ -155,14 +166,14 @@ class NeuralNetwork:
                               = dC/da_l * sigmoid_prime(z_l) * W_l * sigmoid_prime(z_(l-1)) * a_(l-1)
         """
 
-        nabla_W = [np.zeros(W_l.shape) for W_l in self.weights]
-        nabla_b = [np.zeros(b_l.shape) for b_l in self.biases]
+        nabla_W = [np.zeros(W_l[0].shape) for W_l in self.weights]
+        nabla_b = [np.zeros(b_l[0].shape) for b_l in self.biases]
 
         A = [x]
         Z = []
 
         for W_l, b_l in zip(self.weights, self.biases):
-            z_l = W_l @ A[-1] + b_l
+            z_l = W_l[0] @ A[-1] + b_l[0]
             Z += [z_l]
             a_l = sigmoid(z_l)
             A += [a_l]
@@ -183,7 +194,7 @@ class NeuralNetwork:
         dC_dz_l = dC_dz_L
 
         for l_1 in range(2, self.L):
-            W_l = self.weights[-l_1 + 1]
+            W_l = self.weights[-l_1 + 1][0]
             dz_l_da_l_1 = W_l
             z_l_1 = Z[-l_1]
             sp_z_l_1 = sigmoid_prime(z_l_1)
